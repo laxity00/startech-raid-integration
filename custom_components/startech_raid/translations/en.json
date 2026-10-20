@@ -1,0 +1,45 @@
+{
+  "config": {
+    "error": {
+      "identity_changed": "This is a different app instance. Restore its identity file or add it as a new integration.",
+      "invalid_auth": "Token rejected. Copy the token from the app Configuration page.",
+      "cannot_connect": "Cannot connect. Check that the app is running and the internal hostname is correct.",
+      "invalid_response": "Invalid host, token format, or API response."
+    },
+    "step": {
+      "user": {
+        "title": "Connect StarTech RAID Monitor",
+        "description": "Enter the internal app host and the token from its Configuration page. No MQTT broker is required.",
+        "data": {
+          "host": "App host",
+          "port": "API port",
+          "api_token": "Private API token"
+        }
+      },
+      "reconfigure": {
+        "title": "Connect StarTech RAID Monitor",
+        "description": "Enter the internal app host and the token from its Configuration page. No MQTT broker is required.",
+        "data": {
+          "host": "App host",
+          "port": "API port",
+          "api_token": "Private API token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Connect StarTech RAID Monitor",
+        "description": "Enter the internal app host and the token from its Configuration page. No MQTT broker is required.",
+        "data": {
+          "host": "App host",
+          "port": "API port",
+          "api_token": "Private API token"
+        }
+      }
+    },
+    "abort": {
+      "reconfigure_successful": "Connection updated.",
+      "reauth_successful": "Authentication updated.",
+      "already_configured": "This monitor is already configured."
+    }
+  },
+  "title": "StarTech RAID Monitor"
+}

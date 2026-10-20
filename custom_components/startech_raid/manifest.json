@@ -1,0 +1,14 @@
+{
+  "domain": "startech_raid",
+  "name": "StarTech RAID Monitor",
+  "version": "0.3.2",
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "codeowners": [
+    "@laxity00"
+  ],
+  "documentation": "https://github.com/laxity00/startech-raid-integration",
+  "issue_tracker": "https://github.com/laxity00/startech-raid-integration/issues"
+}
