@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory
 from .entity import StartechEntity
+from .smart import metadata, IMPORTANT_IDS
+from .enable_important import enable_important
 from .model import ARRAY_SPECS, DRIVE_SPECS, Spec, current_disk, sensor_value
 
 PARALLEL_UPDATES = 0
@@ -64,7 +66,7 @@ class StartechSensor(StartechEntity, SensorEntity):
             return {"capacity_bytes": disk.get("capacity_bytes")}
         if self.spec.key.startswith("raw_"):
             attr = next((a for a in disk.get("attributes", []) if a["id"] == int(self.spec.key[4:])), {})
-            return {k: attr.get(k) for k in ("id", "normalized", "worst", "threshold", "flags", "raw_hex")}
+            return {**{k: attr.get(k) for k in ("id", "normalized", "worst", "threshold", "flags", "raw_hex")}, **metadata(disk, int(self.spec.key[4:]))}
         if self.spec.key == "attribute_check":
             return {"attributes_compared": disk.get("attributes_compared"),
                     "failed_prefail_attributes": disk.get("failed_prefail_attributes"), "smart_overall_health": "Unknown"}
@@ -87,7 +89,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
             specs = list(DRIVE_SPECS)
             disk = current_disk(coordinator.data, serial)
             if disk and disk.get("smart_data_valid"):
-                specs += [Spec(f"raw_{a['id']}", f"SMART {a['id']} raw", "number", True, True) for a in disk.get("attributes", [])]
+                for a in disk.get("attributes", []):
+                    meta = metadata(disk, a["id"])
+                    important = meta["warning_recommended"]
+                    label = f"SMART {a['id']} {meta['label']} (inferred)" if meta["profile_matched"] else f"SMART {a['id']} raw"
+                    specs.append(Spec(f"raw_{a['id']}", label, "number", not important, not important))
+                    if important:
+                        enable_important(hass, entry.entry_id,
+                                         f"{coordinator.data['instance_id']}_{serial}_raw_{a['id']}")
             for spec in specs:
                 marker = (serial, spec.key)
                 if marker not in seen:

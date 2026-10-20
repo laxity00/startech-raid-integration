@@ -63,7 +63,7 @@ module('homeassistant.helpers.aiohttp_client',async_get_clientsession=lambda has
 module('homeassistant.helpers.selector',TextSelector=lambda v:v)
 module('homeassistant.helpers.update_coordinator',CoordinatorEntity=CoordinatorEntity,DataUpdateCoordinator=DataUpdateCoordinator,UpdateFailed=UpdateFailed)
 module('homeassistant.helpers.device_registry',DeviceInfo=lambda **kw:kw)
-module('homeassistant.helpers.entity_registry',async_get=lambda hass:hass.registry,async_entries_for_config_entry=lambda registry,eid:registry)
+module('homeassistant.helpers.entity_registry',RegistryEntryDisabler=types.SimpleNamespace(INTEGRATION='integration',USER='user'),async_get=lambda hass:hass.registry,async_entries_for_config_entry=lambda registry,eid:registry)
 module('homeassistant.components')
 module('homeassistant.components.sensor',SensorEntity=type('SensorEntity',(),{}),SensorDeviceClass=types.SimpleNamespace(ENUM='enum',TEMPERATURE='temperature',DATA_SIZE='data_size',TIMESTAMP='timestamp',DURATION='duration'),SensorStateClass=types.SimpleNamespace(MEASUREMENT='measurement'))
 module('homeassistant.components.binary_sensor',BinarySensorEntity=type('BinarySensorEntity',(),{}),BinarySensorDeviceClass=types.SimpleNamespace(PROBLEM='problem'))
@@ -84,7 +84,7 @@ setup_spec.loader.exec_module(setup_module)
 
 def sample():
     value=json.loads((ROOT/'tests/fixtures/private_app_sample.json').read_text())
-    value.update(api_version=1,app_version='0.3.2',instance_id='test-instance',fresh=True,sample_time_unix=int(time.time()),
+    value.update(api_version=1,app_version='0.3.5',instance_id='test-instance',fresh=True,sample_time_unix=int(time.time()),
                  known_ssds=[{k:d.get(k) for k in ['serial','port','model','firmware','capacity_bytes']} for d in value['ssds']],
                  service={'stale_after_seconds':900,'interval_seconds':300,'smart_enabled':True,'smart_paused':False,
                           'temperature_warning_c':65,'duration_ms':100,'next_collection_unix':int(time.time())+300})
@@ -182,8 +182,9 @@ class Tests(unittest.IsolatedAsyncioTestCase):
     async def test_problem_entities(self):
         created=[]
         await binary.async_setup_entry(self.hass,types.SimpleNamespace(runtime_data=self.coordinator,async_on_unload=lambda cb:None),lambda values:created.extend(values))
-        self.assertEqual(len(created),6)
-        self.assertTrue(all(e.is_on is False for e in created))
+        self.assertEqual(len(created),12)
+        self.assertTrue(all(e.is_on is False for e in created if e.key not in ("media_error_warning","interface_error_warning","life_warning")))
+        self.assertTrue(all(e.is_on is None for e in created if e.key in ("media_error_warning","interface_error_warning","life_warning")))
         self.coordinator.data['raid_raw']=2
         self.assertTrue(next(e for e in created if e.key=='raid_problem').is_on)
         self.coordinator.data['ssds'][0]['temperature_candidate_c']=70
@@ -225,6 +226,60 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('a'*64,encoded)
         self.assertNotIn('test-instance',encoded)
         self.assertEqual(value['dashboard']['views'][0]['cards'][1]['entities'],['sensor.registered_temperature'])
+
+
+    async def test_profile_labels_warning_boundaries_and_migration(self):
+        smart=importlib.import_module('custom_components.startech_raid.smart')
+        disk=self.data['ssds'][0]
+        disk.update(firmware='Y0507A0',smart_controller_signature='SMI2259XT')
+        ids=list(smart.LABELS)
+        disk['attributes']=[dict(id=i,raw=0,normalized=100,worst=100,flags=50,threshold=50,raw_hex='000000000000') for i in ids]
+        attrs={a['id']:a for a in disk['attributes']}
+        attrs[169]['raw']=100
+        attrs[163]['raw']=10;attrs[168]['raw']=5050;attrs[195]['raw']=123
+        self.assertFalse(model.problem(self.data,'media_error_warning',disk['serial']))
+        self.assertFalse(model.problem(self.data,'life_warning',disk['serial']))
+        for i in smart.MEDIA_IDS:
+            attrs[i]['raw']=1
+            self.assertTrue(model.problem(self.data,'media_error_warning',disk['serial']))
+            attrs[i]['raw']=0
+        for value,expected in [(21,False),(20,True),(0,True),(101,None),(-1,None),(None,None)]:
+            attrs[169]['raw']=value
+            self.assertIs(model.problem(self.data,'life_warning',disk['serial']),expected)
+        attrs[199]['raw']=1
+        self.assertTrue(model.problem(self.data,'interface_error_warning',disk['serial']))
+        self.assertFalse(model.problem(self.data,'media_error_warning',disk['serial']))
+        attrs[5]['raw']=None
+        self.assertIsNone(model.problem(self.data,'media_error_warning',disk['serial']))
+        disk['smart_data_valid']=False
+        self.assertTrue(all(v is None for v in smart.indicators(disk).values()))
+        disk['smart_data_valid']=True
+        disk['firmware']='OTHER'
+        self.assertFalse(smart.metadata(disk,5)['profile_matched'])
+        self.assertIsNone(model.problem(self.data,'media_error_warning',disk['serial']))
+        disk['firmware']='Y0507A0'
+        # Exercise actual platform migration with a registry double: user choices survive.
+        records={}
+        for i,disabled in [(5,'integration'),(160,'user'),(161,None)]:
+            uid=f"test-instance_{disk['serial']}_raw_{i}"
+            records[uid]=types.SimpleNamespace(entity_id=f'sensor.existing_{i}',config_entry_id='entry-test',disabled_by=disabled)
+        class Registry:
+            def async_get_entity_id(self,domain,platform,uid):
+                return records[uid].entity_id if uid in records else None
+            def async_get(self,eid):return next(e for e in records.values() if e.entity_id==eid)
+            def async_update_entity(self,eid,**kwargs):
+                for k,v in kwargs.items():setattr(self.async_get(eid),k,v)
+        self.hass.registry=Registry()
+        created=[]
+        self.entry.runtime_data=self.coordinator
+        await sensor.async_setup_entry(self.hass,self.entry,lambda values:created.extend(values))
+        important=[e for e in created if e.serial==disk['serial'] and e.spec.key.startswith('raw_') and e._attr_entity_registry_enabled_default]
+        self.assertEqual(len(important),len(smart.IMPORTANT_IDS))
+        self.assertIn('Reallocated sectors',next(e for e in important if e.spec.key=='raw_5')._attr_name)
+        self.assertIsNone(records[f"test-instance_{disk['serial']}_raw_5"].disabled_by)
+        self.assertEqual(records[f"test-instance_{disk['serial']}_raw_160"].disabled_by,'user')
+        self.data['fresh']=False
+        self.assertIsNone(model.problem(self.data,'life_warning',disk['serial']))
 
 
 if __name__=='__main__':unittest.main()

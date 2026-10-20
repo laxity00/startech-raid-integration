@@ -10,6 +10,10 @@ async def async_get_config_entry_diagnostics(hass, entry):
     temperature_ids = [e.entity_id for e in entities if e.unique_id.endswith("_temperature_candidate_c")]
     overview_ids = [e.entity_id for e in entities if any(e.unique_id.endswith("_" + key) for key in ("raid_status", "raid_problem", "collection_problem", "sample_time_unix", "smart_collection"))]
     cards = [{"type": "entities", "title": "StarTech RAID health", "entities": overview_ids}]
+    warning_ids = [e.entity_id for e in entities if any(e.unique_id.endswith("_" + key) for key in
+                   ("attribute_problem", "temperature_warning", "media_error_warning", "interface_error_warning", "life_warning"))]
+    if warning_ids:
+        cards.append({"type": "entities", "title": "SSD warning indicators", "entities": warning_ids})
     if temperature_ids:
         cards.append({"type": "history-graph", "title": "SSD temperature candidates", "hours_to_show": 48, "entities": temperature_ids})
     return {"app_version": data.get("app_version"), "backend_version": data.get("tool_version"),

@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import math
 import time
+from .smart import indicators
 
 LABELS = {1: "Healthy", 2: "Degraded", 3: "Failed", 4: "Rebuilding"}
 
@@ -109,6 +110,8 @@ def problem(data, key, serial=None):
     disk = current_disk(data, serial)
     if disk is None:
         return None
+    if key in ("media_error_warning", "interface_error_warning", "life_warning"):
+        return indicators(disk)[key]
     if key == "temperature_warning":
         temp = disk.get("temperature_candidate_c")
         return temp >= data["service"]["temperature_warning_c"] if type(temp) in (int, float) else None
