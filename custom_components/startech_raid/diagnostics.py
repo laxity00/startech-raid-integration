@@ -14,6 +14,10 @@ async def async_get_config_entry_diagnostics(hass, entry):
                    ("attribute_problem", "temperature_warning", "media_error_warning", "interface_error_warning", "life_warning"))]
     if warning_ids:
         cards.append({"type": "entities", "title": "SSD warning indicators", "entities": warning_ids})
+    collection_ids = [e.entity_id for e in entities if any(e.unique_id.endswith("_" + key) for key in
+                      ("collection_status", "collection_error"))]
+    if collection_ids:
+        cards.append({"type": "entities", "title": "SSD collection diagnostics", "entities": collection_ids})
     if temperature_ids:
         cards.append({"type": "history-graph", "title": "SSD temperature candidates", "hours_to_show": 48, "entities": temperature_ids})
     return {"app_version": data.get("app_version"), "backend_version": data.get("tool_version"),

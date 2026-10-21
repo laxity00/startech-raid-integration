@@ -144,8 +144,8 @@ class Tests(unittest.IsolatedAsyncioTestCase):
     async def test_sensor_values_and_metadata(self):
         created=[]
         await sensor.async_setup_entry(self.hass,types.SimpleNamespace(runtime_data=self.coordinator,async_on_unload=lambda cb:None),lambda values:created.extend(values))
-        self.assertEqual(len(created),84)
-        self.assertEqual(len({e._attr_unique_id for e in created}),84)
+        self.assertEqual(len(created),88)
+        self.assertEqual(len({e._attr_unique_id for e in created}),88)
         self.assertEqual(sum(not e._attr_entity_registry_enabled_default for e in created),60)
         temps=[e for e in created if e.spec.kind=='temperature']
         self.assertEqual(len(temps),2)
@@ -174,7 +174,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data['ssds'][0]['serial']='NEW-SERIAL'
         self.coordinator.data['known_ssds'].append(dict(self.coordinator.data['known_ssds'][0],serial='NEW-SERIAL'))
         for callback in self.coordinator.listeners:callback()
-        self.assertEqual(len(created),123)
+        self.assertEqual(len(created),129)
         self.assertFalse(old.available)
         self.coordinator.data.update(raid_raw=255,raid_status='Unknown')
         self.assertEqual(model.sensor_value(self.coordinator.data,model.ARRAY_SPECS[0]),'Unknown')
@@ -280,6 +280,70 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[f"test-instance_{disk['serial']}_raw_160"].disabled_by,'user')
         self.data['fresh']=False
         self.assertIsNone(model.problem(self.data,'life_warning',disk['serial']))
+
+
+
+    async def test_collection_diagnostics_lifecycle(self):
+        status=model.DRIVE_SPECS[0]; error=model.DRIVE_SPECS[1]
+        self.assertEqual(status.key,'collection_status')
+        self.assertEqual(error.key,'collection_error')
+        serial='TEST-SERIAL-0'
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Complete')
+        self.assertEqual(model.sensor_value(self.data,error,serial),'None reported')
+        entity=sensor.StartechSensor(self.coordinator,error,serial)
+        self.assertTrue(entity.available)
+        self.assertTrue(entity._attr_entity_registry_enabled_default)
+        disk=self.data['ssds'][0]
+        # Data read error after successful IDENTIFY; pause is set on this first sample.
+        disk.update(error='SMART data transport failed',smart_data_valid=False,smart_thresholds_valid=False)
+        self.data['service']['smart_paused']=True
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Error')
+        self.assertEqual(entity.native_value,'SMART data transport failed')
+        self.assertTrue(entity.extra_state_attributes['identity_verified'])
+        # IDENTIFY failed: still report exact last-known-port observation explicitly.
+        disk.update(error='IDENTIFY transport failed; port presence unknown',identity_verified=False,serial=None)
+        self.assertEqual(entity.native_value,disk['error'])
+        self.assertEqual(entity.extra_state_attributes['attribution'],'last_known_port')
+        self.assertFalse(entity.extra_state_attributes['identity_verified'])
+        # No attribution to a replacement or ambiguous last-known drive.
+        disk['serial']='REPLACEMENT'
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Unknown')
+        disk['serial']=None
+        self.data['known_ssds'].append(dict(self.data['known_ssds'][0],serial='OLDER-DRIVE'))
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Unknown')
+        self.data['known_ssds'].pop()
+        # Later RAID-only sample must not retain the error or claim no error.
+        self.data['smart_requested']=False;disk.update(requested=False,error=None)
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Paused')
+        self.assertIn('paused',entity.native_value)
+        self.data['service']['smart_enabled']=False
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Disabled')
+        self.assertIn('disabled',entity.native_value)
+        self.data['query_ok']=False
+        self.assertEqual(model.sensor_value(self.data,status,serial),'Unknown')
+        self.data['fresh']=False
+        self.assertIsNone(entity.native_value)
+        self.assertFalse(entity.available)
+        self.assertIsNone(entity.extra_state_attributes)
+
+    async def test_collection_diagnostics_limits_and_other_drive(self):
+        serial='TEST-SERIAL-0';disk=self.data['ssds'][0]
+        error=model.DRIVE_SPECS[1]
+        entity=sensor.StartechSensor(self.coordinator,error,serial)
+        disk['error']='x'*300
+        self.assertLessEqual(len(entity.native_value),255)
+        self.assertEqual(entity.extra_state_attributes['error_message'],'x'*300)
+        self.assertEqual(model.collection_details(self.data,'TEST-SERIAL-1')['status'],'Complete')
+        self.coordinator.last_update_success=False
+        self.assertFalse(entity.available)
+        self.coordinator.last_update_success=True
+        self.data['duplicate_ssd_identity']=True
+        self.assertEqual(model.collection_details(self.data,serial)['status'],'Unknown')
+        self.data=sample();self.coordinator.data=self.data
+        self.data['ssds'][0]['smart_thresholds_valid']=False
+        self.assertEqual(model.collection_details(self.data,serial)['status'],'Unknown')
+        self.data['sample_time_unix']-=901
+        self.assertIsNone(model.collection_details(self.data,serial))
 
 
 if __name__=='__main__':unittest.main()

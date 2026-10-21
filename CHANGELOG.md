@@ -1,3 +1,10 @@
+# 0.3.6
+
+- Add enabled per-SSD collection status and exact error diagnostics from cached app data.
+- Distinguish complete, failed, paused, disabled, stale and unknown observations.
+- Preserve identity safety when IDENTIFY fails or SSDs are replaced.
+- Include dashboard documentation and exact error-message attributes.
+
 # 0.3.5
 
 SMART candidate labels, conservative warning entities and important counter enablement.

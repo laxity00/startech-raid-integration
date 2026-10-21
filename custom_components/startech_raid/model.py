@@ -47,6 +47,48 @@ def current_disk(data, serial):
     return next((d for d in data.get("ssds", []) if d.get("serial") == serial and d.get("identity_verified")), None)
 
 
+def collection_details(data, serial):
+    """Report the latest port observation without asserting a failed IDENTIFY's identity.
+
+    A port error may lack a serial. Associate it only with a unique last-known
+    SSD on that port, and expose that attribution explicitly. Never carry an
+    old error across subsequent RAID-only samples or assign a replacement's error.
+    """
+    if not fresh(data):
+        return None
+    result = {"status": "Unknown", "error_message": "Unknown - no verified collection result",
+              "port": None, "identity_verified": False, "attribution": "unknown"}
+    if not data.get("query_ok") or data.get("duplicate_ssd_identity"):
+        return result
+    service = data["service"]
+    if not service.get("smart_enabled"):
+        return dict(result, status="Disabled", error_message="Not collected - SSD monitoring disabled")
+    known = next((d for d in data.get("known_ssds", []) if d.get("serial") == serial), None)
+    if not known or type(known.get("port")) is not int or known["port"] not in (0, 1):
+        return result
+    port = known["port"]
+    records = [d for d in data.get("ssds", []) if type(d.get("port")) is int and d["port"] == port]
+    disk = records[0] if len(records) == 1 else None
+    if disk and disk.get("serial") and disk["serial"] != serial:
+        return result
+    verified = bool(disk and disk.get("identity_verified") and disk.get("serial") == serial)
+    if not verified and sum(d.get("port") == port for d in data.get("known_ssds", [])) != 1:
+        return result
+    result.update(port=port, identity_verified=verified,
+                  attribution="verified_ssd" if verified else "last_known_port")
+    requested = bool(disk and disk.get("requested") is True and data.get("smart_requested") is True)
+    if requested:
+        message = disk.get("error")
+        if isinstance(message, str) and message:
+            return dict(result, status="Error", error_message=message)
+        if verified and disk.get("smart_data_valid") and disk.get("smart_thresholds_valid"):
+            return dict(result, status="Complete", error_message="None reported")
+        return result
+    if service.get("smart_paused"):
+        return dict(result, status="Paused", error_message="Not collected - SMART polling paused after error")
+    return result
+
+
 @dataclass(frozen=True)
 class Spec:
     key: str
@@ -64,6 +106,8 @@ ARRAY_SPECS = (
     Spec("next_collection_unix", "Next collection", "timestamp", True),
 )
 DRIVE_SPECS = (
+    Spec("collection_status", "SSD collection status", "collection", True),
+    Spec("collection_error", "SSD collection error", diagnostic=True),
     Spec("temperature_candidate_c", "Temperature candidate", "temperature"),
     Spec("attribute_check", "Pre-fail attribute health", "attribute"),
     Spec("capacity_bytes", "Capacity", "capacity", True), Spec("model", "Model", diagnostic=True),
@@ -85,6 +129,14 @@ def sensor_value(data, spec, serial=None):
                 return "Disabled"
             return "Complete" if data.get("smart_complete") else "Incomplete"
         return data.get(spec.key)
+    if spec.key in ("collection_status", "collection_error"):
+        details = collection_details(data, serial)
+        if details is None:
+            return None
+        if spec.key == "collection_status":
+            return details["status"]
+        message = details["error_message"]
+        return message if len(message) <= 255 else "Error - see error_message attribute"
     disk = current_disk(data, serial)
     if disk is None:
         return None

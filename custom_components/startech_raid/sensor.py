@@ -5,7 +5,7 @@ from homeassistant.const import EntityCategory
 from .entity import StartechEntity
 from .smart import metadata, IMPORTANT_IDS
 from .enable_important import enable_important
-from .model import ARRAY_SPECS, DRIVE_SPECS, Spec, current_disk, sensor_value
+from .model import ARRAY_SPECS, DRIVE_SPECS, Spec, current_disk, sensor_value, collection_details
 
 PARALLEL_UPDATES = 0
 
@@ -18,11 +18,12 @@ class StartechSensor(StartechEntity, SensorEntity):
         self._attr_entity_registry_enabled_default = not spec.disabled
         if spec.diagnostic:
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        if spec.kind in ("raid", "smart", "attribute"):
+        if spec.kind in ("raid", "smart", "attribute", "collection"):
             self._attr_device_class = SensorDeviceClass.ENUM
             self._attr_options = {"raid": ["Healthy", "Degraded", "Failed", "Rebuilding", "Unknown"],
                                   "smart": ["Complete", "Incomplete", "Disabled", "Paused after error"],
-                                  "attribute": ["Passed", "Failed", "Unknown"]}[spec.kind]
+                                  "attribute": ["Passed", "Failed", "Unknown"],
+                                  "collection": ["Complete", "Error", "Disabled", "Paused", "Unknown"]}[spec.kind]
         elif spec.kind == "temperature":
             self._attr_device_class = SensorDeviceClass.TEMPERATURE
             self._attr_native_unit_of_measurement = "°C"
@@ -56,6 +57,9 @@ class StartechSensor(StartechEntity, SensorEntity):
         if self.serial is None:
             return {"controller_raw_state": data.get("raid_raw"), "mapping_validation": "static_reverse_engineering",
                     "array_synchronization_verified": False, "error": data.get("error")}
+        if self.spec.key in ("collection_status", "collection_error"):
+            details = collection_details(data, self.serial)
+            return {**details, "sample_time_unix": data.get("sample_time_unix")} if details else None
         disk = current_disk(data, self.serial)
         if not disk:
             return None

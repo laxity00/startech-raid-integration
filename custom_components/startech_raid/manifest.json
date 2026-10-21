@@ -1,7 +1,7 @@
 {
   "domain": "startech_raid",
   "name": "StarTech RAID Monitor",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "config_flow": true,
   "integration_type": "device",
   "iot_class": "local_polling",
